@@ -1,4 +1,4 @@
-Unsupervised training with Autoencoder 입니다
+Unsupervised model with Autoencoder 입니다
 
 양품대비 불량품이 극도로 작을때(대략 0.1%이하) 불량품을 검출해내기 위해 만들어진 모델입니다.
 
