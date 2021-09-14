@@ -1,0 +1,132 @@
+
+from sklearn.preprocessing import Normalizer, MinMaxScaler
+from sklearn.pipeline import Pipeline
+import pandas as pd 
+import numpy as np
+import tensorflow as tf #2.6.0
+
+#divide between fraud and clean to make unsupervised model
+fraud = df[df.BADGB == 0]
+clean = df[df.BADGB == 1]
+fraud
+
+TRAINING_SAMPLE = 3000
+
+X_train = clean.iloc[TRAINING_SAMPLE:].drop(['BADGB','IDX'],axis=1)
+X_test = clean.iloc[:TRAINING_SAMPLE].append(fraud).sample(frac=1)
+X_train, X_validate = train_test_split(X_train, test_size =0.25,random_state = 121)
+X_test, y_test = X_test.drop(['BADGB','IDX'],axis=1).values , X_test[['BADGB','IDX']]
+
+
+# configure our pipeline
+pipeline = Pipeline([('normalizer', Normalizer()),
+                     ('scaler', MinMaxScaler())])
+
+# get normalization parameters by fitting to the training data
+pipeline.fit(X_train)
+# transform the training and validation data with these parameters
+X_train_transformed = pipeline.transform(X_train)
+X_validate_transformed = pipeline.transform(X_validate)
+
+
+# misc
+import random as rn
+input_dim = X_train_transformed.shape[1]
+BATCH_SIZE = 512
+EPOCHS = 1000
+
+# https://keras.io/layers/core/
+autoencoder = tf.keras.models.Sequential([
+    
+    # deconstruct / encode
+    tf.keras.layers.Dense(input_dim, activation='elu', input_shape=(input_dim, )), 
+    tf.keras.layers.Dense(16, activation='elu'),
+    tf.keras.layers.Dense(8, activation='elu'),
+    tf.keras.layers.Dense(4, activation='elu'),
+    tf.keras.layers.Dense(2, activation='elu'),
+    
+    # reconstruction / decode
+    tf.keras.layers.Dense(4, activation='elu'),
+    tf.keras.layers.Dense(8, activation='elu'),
+    tf.keras.layers.Dense(16, activation='elu'),
+    tf.keras.layers.Dense(input_dim, activation='elu')
+    
+])
+
+# https://keras.io/api/models/model_training_apis/
+autoencoder.compile(optimizer="adam", 
+                    loss="mse",
+                    metrics=["acc"])
+
+# print an overview of our model
+autoencoder.summary();
+
+from datetime import datetime
+
+# current date and time
+yyyymmddHHMM = datetime.now().strftime('%Y%m%d%H%M')
+
+# new folder for a new run
+log_subdir = f'{yyyymmddHHMM}_batch{BATCH_SIZE}_layers{len(autoencoder.layers)}'
+
+# define our early stopping
+early_stop = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss',
+    min_delta=0.0001,
+    patience=100,
+    verbose=1, 
+    mode='min',
+    restore_best_weights=True
+)
+
+save_model = tf.keras.callbacks.ModelCheckpoint(
+    filepath='autoencoder_best_weights.hdf5',
+    save_best_only=True,
+    monitor='val_loss',
+    verbose=0,
+    mode='min'
+)
+
+tensorboard = tf.keras.callbacks.TensorBoard(
+    f'logs/{log_subdir}',
+    batch_size=BATCH_SIZE,
+    update_freq='batch'
+)
+
+# callbacks argument only takes a list
+cb = [early_stop, save_model, tensorboard]
+
+
+
+#ModelTraining
+history = autoencoder.fit(
+    X_train_transformed, X_train_transformed,
+    shuffle=True,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    callbacks=cb,
+    validation_data=(X_validate_transformed, X_validate_transformed)
+);
+
+#
+THRESHOLD = 25
+
+def mad_score(points):
+    """https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm """
+    m = np.median(points)
+    ad = np.abs(points - m)
+    mad = np.median(ad)
+    
+    return 0.6745 * ad / mad
+
+z_scores = mad_score(mse)
+outliers = z_scores < THRESHOLD
+
+from sklearn.metrics import (confusion_matrix, 
+                             precision_recall_curve)
+
+# get (mis)classification
+cm = confusion_matrix(y_test.BADGB, outliers)
+y_test['outliers'] = outliers
+
+print(cm)
